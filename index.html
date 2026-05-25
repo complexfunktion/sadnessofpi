@@ -128,8 +128,8 @@ canvas#curve-canvas {
   function resize() {
     const aspect = 9 / 16;
     const wh = window.innerHeight, ww = window.innerWidth;
-    if (ww / wh > aspect) { H = wh/7; W = Math.round(H * aspect); }
-    else                  { W = ww/7; H = Math.round(W / aspect); }
+    if (ww / wh > aspect) { H = wh; W = Math.round(H * aspect); }
+    else                  { W = ww; H = Math.round(W / aspect); }
     wrapper.style.width  = W + 'px';
     wrapper.style.height = H + 'px';
     bgCanvas.width = W; bgCanvas.height = H;
