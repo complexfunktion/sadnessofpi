@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -21,39 +20,34 @@ html, body {
   overflow: hidden;
 }
 canvas#bg-canvas {
-  position: absolute;
-  top: 0; left: 0;
+  position: absolute; top: 0; left: 0;
   width: 100%; height: 100%;
   z-index: 0;
 }
 canvas#curve-canvas {
-  position: absolute;
-  top: 0; left: 0;
+  position: absolute; top: 0; left: 0;
   width: 100%; height: 100%;
   z-index: 2;
 }
 #img-layer {
-  position: absolute;
-  top: 0; left: 0;
+  position: absolute; top: 0; left: 0;
   width: 100%; height: 100%;
   z-index: 1;
   pointer-events: none;
 }
-/* 青点用画像: 上端に配置 (画像の上が点に重なる) */
+/* 青点用画像: top=青点Y, height=残り下端まで → 画像上端が点に重なる */
 #img-layer img.blue-img {
   position: absolute;
-  left: 0;
-  width: 100%;
+  left: 0; width: 100%;
   object-fit: cover;
   object-position: top center;
   opacity: 0;
   transition: opacity 0.6s ease;
 }
-/* 赤点用画像: 下端に配置 (画像の下が点に重なる) */
+/* 赤点用画像: top=0, height=赤点Y → 画像下端が点に重なる */
 #img-layer img.red-img {
   position: absolute;
-  left: 0;
-  width: 100%;
+  left: 0; width: 100%;
   object-fit: cover;
   object-position: bottom center;
   opacity: 0;
@@ -61,13 +55,13 @@ canvas#curve-canvas {
 }
 #hud {
   position: absolute;
-  bottom: 24px; left: 0; right: 0;
+  bottom: 20px; left: 0; right: 0;
   text-align: center;
   z-index: 3;
   pointer-events: none;
   font-family: 'Courier New', monospace;
-  font-size: 12px;
-  color: rgba(255,255,255,0.6);
+  font-size: 11px;
+  color: rgba(255,255,255,0.55);
 }
 </style>
 </head>
@@ -76,17 +70,16 @@ canvas#curve-canvas {
   <canvas id="bg-canvas"></canvas>
   <div id="img-layer">
     <!--
-      画像ファイルをこのHTMLと同じフォルダの images/ に置いてください。
-      青点用(blue-img): 画像の上端が青点の位置に来るように配置されます。
-      赤点用(red-img): 画像の下端が赤点の位置に来るように配置されます。
- 
-      各idの役割:
-        img-scene1-p1  : シーン① 青点(y=sinx-1)用
-        img-scene1-p2  : シーン① 赤点(y=sin(πx)+1)用
-        img-scene2-p1  : シーン② ズーム時 青点用
-        img-scene2-p2  : シーン② ズーム時 赤点用
-        img-scene3-p1  : シーン③ 青点用
-        img-scene3-p2  : シーン③ 赤点用
+      images/ フォルダに画像を置いてください。
+      blue-img: 画像の上端が青点(y=sinx-1)に重なります
+      red-img : 画像の下端が赤点(y=sin(πx)+1)に重なります
+
+      img-scene1-p1 … シーン① 青点用
+      img-scene1-p2 … シーン① 赤点用
+      img-scene2-p1 … シーン② 青点用
+      img-scene2-p2 … シーン② 赤点用
+      img-scene3-p1 … シーン③ 青点用
+      img-scene3-p2 … シーン③ 赤点用
     -->
     <img id="img-scene1-p1" class="blue-img" src="images/scene1_blue.png" alt="">
     <img id="img-scene1-p2" class="red-img"  src="images/scene1_red.png"  alt="">
@@ -98,61 +91,93 @@ canvas#curve-canvas {
   <canvas id="curve-canvas"></canvas>
   <div id="hud">x = 0.0000</div>
 </div>
- 
+
 <script>
-(function() {
-  const TARGET_X   = 2005.55;
-  const SLOW_RANGE = 8;
-  const ZOOM_RANGE = 4;
-  const ZOOM_MAX   = 30;
-  const BASE_SPEED = 1.4;
-  const SLOW_SPEED = 0.011;
- 
+(function () {
+  /* ---- パラメータ ---- */
+  const TARGET_X    = 2005.55;
+  const SLOW_RANGE  = 8;    // この距離から減速開始
+  const ZOOM_RANGE  = 4;    // この距離からズーム開始
+  const SCENE2_HALF = 1.5;  // ★ シーン②の片側幅（小さいほど短い）
+  const ZOOM_MAX    = 30;
+  const BASE_SPEED  = 1.4;
+  const SLOW_SPEED  = 0.011;
+
+  /* ---- DOM ---- */
   const wrapper  = document.getElementById('wrapper');
   const bgCanvas = document.getElementById('bg-canvas');
   const cvs      = document.getElementById('curve-canvas');
   const bgCtx    = bgCanvas.getContext('2d');
   const ctx      = cvs.getContext('2d');
   const hud      = document.getElementById('hud');
- 
+
   const imgMap = {
     scene1: { p1: document.getElementById('img-scene1-p1'), p2: document.getElementById('img-scene1-p2') },
     scene2: { p1: document.getElementById('img-scene2-p1'), p2: document.getElementById('img-scene2-p2') },
     scene3: { p1: document.getElementById('img-scene3-p1'), p2: document.getElementById('img-scene3-p2') },
   };
- 
-  let W, H;
- 
+
+  let W = 0, H = 0;
+  let curX = TARGET_X - 55;
+  let phase = 'scene1';
+  let prevPhase = '';          // ← 空にしておき初回必ず表示させる
+  let currentScene = '';       // ← 空にしておき初回必ず表示させる
+  let fadeTimer = null;
+
+  /* ---- リサイズ ---- */
   function resize() {
     const aspect = 9 / 16;
-    const wh = window.innerHeight;
-    const ww = window.innerWidth;
-    if (ww / wh > aspect) {
-      H = wh; W = Math.round(H * aspect);
-    } else {
-      W = ww; H = Math.round(W / aspect);
-    }
+    const wh = window.innerHeight, ww = window.innerWidth;
+    if (ww / wh > aspect) { H = wh; W = Math.round(H * aspect); }
+    else                  { W = ww; H = Math.round(W / aspect); }
     wrapper.style.width  = W + 'px';
     wrapper.style.height = H + 'px';
-    bgCanvas.width  = W; bgCanvas.height  = H;
-    cvs.width = W; cvs.height = H;
-    updateImgPositions();
+    bgCanvas.width = W; bgCanvas.height = H;
+    cvs.width = W;      cvs.height = H;
   }
- 
-  /* 青画像: top = 青点のcanvas Y座標, 高さ = H - top
-     赤画像: top = 0, 高さ = 赤点のcanvas Y座標             */
+
+  /* ---- 数学 ---- */
+  function f1(x) { return Math.sin(x) - 1; }
+  function f2(x) { return Math.sin(Math.PI * x) + 1; }
+
+  function getZoom(x) {
+    const d = Math.abs(x - TARGET_X);
+    if (d > SLOW_RANGE) return 1;
+    const t = 1 - d / SLOW_RANGE;
+    return 1 + (ZOOM_MAX - 1) * Math.pow(t, 2.5);
+  }
+
+  function getSpeed(x) {
+    if (phase === 'scene3') return BASE_SPEED;
+    const d = Math.abs(x - TARGET_X);
+    if (d > SLOW_RANGE * 2) return BASE_SPEED;
+    if (d > ZOOM_RANGE) {
+      const t = 1 - (d - ZOOM_RANGE) / (SLOW_RANGE * 2 - ZOOM_RANGE);
+      return BASE_SPEED + (SLOW_SPEED - BASE_SPEED) * Math.min(t * 2, 1);
+    }
+    return SLOW_SPEED;
+  }
+
+  function worldToCanvas(wx, wy, cx, cy, zoom) {
+    const spanX = (W / zoom) * 0.05;
+    const spanY = spanX * (H / W);
+    return [
+      W / 2 + (wx - cx) / spanX * (W / 2),
+      H / 2 - (wy - cy) / spanY * (H / 2)
+    ];
+  }
+
+  /* ---- 画像位置 (毎フレーム) ---- */
   function updateImgPositions() {
     const zoom = getZoom(curX);
-    const y1v = f1(curX);
-    const y2v = f2(curX);
-    const cx = curX;
-    const cy = (y1v + y2v) / 2;
+    const y1v  = f1(curX), y2v = f2(curX);
+    const cx   = curX, cy = (y1v + y2v) / 2;
     const [, blueY] = worldToCanvas(curX, y1v, cx, cy, zoom);
-    const [, redY]  = worldToCanvas(curX, y2v, cx, cy, zoom);
- 
-    const blueTop = Math.max(0, Math.min(H - 1, Math.round(blueY)));
-    const redBot  = Math.max(1, Math.min(H,   Math.round(redY)));
- 
+    const [, redY ] = worldToCanvas(curX, y2v, cx, cy, zoom);
+
+    const blueTop = Math.max(0,   Math.min(H - 1, Math.round(blueY)));
+    const redBot  = Math.max(1,   Math.min(H,     Math.round(redY)));
+
     Object.values(imgMap).forEach(s => {
       s.p1.style.top    = blueTop + 'px';
       s.p1.style.height = (H - blueTop) + 'px';
@@ -160,145 +185,103 @@ canvas#curve-canvas {
       s.p2.style.height = redBot + 'px';
     });
   }
- 
-  let currentScene = 'scene1';
-  let fadeTimer = null;
- 
-  function fadeToScene(scene) {
-    if (scene === currentScene) return;
+
+  /* ---- フェード (強制フラグあり) ---- */
+  function fadeToScene(scene, force) {
+    if (!force && scene === currentScene) return;
     currentScene = scene;
     const next = imgMap[scene];
     if (fadeTimer) clearTimeout(fadeTimer);
+    // 全部消す
     Object.values(imgMap).forEach(s => {
       s.p1.style.opacity = '0';
       s.p2.style.opacity = '0';
     });
+    // 少し待ってから表示（CSS transitionが効くように）
     fadeTimer = setTimeout(() => {
       next.p1.style.opacity = '1';
       next.p2.style.opacity = '1';
-    }, 30);
+    }, 50);
   }
- 
-  function f1(x) { return Math.sin(x) - 1; }
-  function f2(x) { return Math.sin(Math.PI * x) + 1; }
- 
-  function getZoom(x) {
-    const dist = Math.abs(x - TARGET_X);
-    if (dist > SLOW_RANGE) return 1;
-    const t = 1 - dist / SLOW_RANGE;
-    return 1 + (ZOOM_MAX - 1) * Math.pow(t, 2.5);
-  }
- 
-  function getSpeed(x, phase) {
-    if (phase === 'scene3') return BASE_SPEED;
-    const dist = Math.abs(x - TARGET_X);
-    if (dist > SLOW_RANGE * 2) return BASE_SPEED;
-    if (dist > ZOOM_RANGE) {
-      const t = 1 - (dist - ZOOM_RANGE) / (SLOW_RANGE * 2 - ZOOM_RANGE);
-      return BASE_SPEED + (SLOW_SPEED - BASE_SPEED) * Math.min(t * 2, 1);
-    }
-    return SLOW_SPEED;
-  }
- 
-  function worldToCanvas(wx, wy, cx, cy, zoom) {
-    const spanX = (W / zoom) * 0.05;
-    const spanY = spanX * (H / W);
-    const px = W / 2 + (wx - cx) / spanX * (W / 2);
-    const py = H / 2 - (wy - cy) / spanY * (H / 2);
-    return [px, py];
-  }
- 
+
+  /* ---- 描画: 背景 ---- */
   function drawBackground() {
     bgCtx.fillStyle = '#000';
     bgCtx.fillRect(0, 0, W, H);
   }
- 
+
+  /* ---- 描画: グリッド ---- */
   function drawGrid(cx, cy, zoom) {
     const spanX = (W / zoom) * 0.05;
     const spanY = spanX * (H / W);
- 
-    /* グリッド間隔: 整数値のみ表示するため常に整数ステップ */
-    let step;
-    if (zoom > 15) step = 1;
-    else if (zoom > 5) step = 1;
-    else if (zoom > 2) step = 1;
-    else step = 2;
- 
+    const step  = zoom > 2 ? 1 : 2;
+
     ctx.save();
- 
-    /* 細グリッド線 */
     ctx.strokeStyle = 'rgba(255,255,255,0.07)';
     ctx.lineWidth = 0.5;
+
     const x0 = Math.floor((cx - spanX) / step) * step;
-    const x1 = Math.ceil((cx + spanX) / step) * step;
+    const x1 = Math.ceil ((cx + spanX) / step) * step;
     for (let gx = x0; gx <= x1 + 1e-9; gx += step) {
       const [px] = worldToCanvas(gx, 0, cx, cy, zoom);
       ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, H); ctx.stroke();
     }
     const y0 = Math.floor((cy - spanY) / step) * step;
-    const y1 = Math.ceil((cy + spanY) / step) * step;
+    const y1 = Math.ceil ((cy + spanY) / step) * step;
     for (let gy = y0; gy <= y1 + 1e-9; gy += step) {
       const [, py] = worldToCanvas(0, gy, cx, cy, zoom);
       ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(W, py); ctx.stroke();
     }
- 
-    /* 軸 */
+
+    // 軸
     ctx.strokeStyle = 'rgba(255,255,255,0.32)';
     ctx.lineWidth = 1;
     const [, axisY] = worldToCanvas(0, 0, cx, cy, zoom);
+    const [axisX]   = worldToCanvas(0, 0, cx, cy, zoom);
     ctx.beginPath(); ctx.moveTo(0, axisY); ctx.lineTo(W, axisY); ctx.stroke();
-    const [axisX] = worldToCanvas(0, 0, cx, cy, zoom);
     ctx.beginPath(); ctx.moveTo(axisX, 0); ctx.lineTo(axisX, H); ctx.stroke();
- 
-    /* 目盛りラベル: 整数値のみ、小さいフォント固定 */
-    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+
+    // 目盛りラベル（整数のみ・9px）
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
     ctx.font = "9px 'Courier New', monospace";
- 
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
+
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     for (let gx = x0; gx <= x1 + 1e-9; gx += step) {
-      if (!Number.isInteger(Math.round(gx))) continue;
-      const intGx = Math.round(gx);
-      const [px] = worldToCanvas(intGx, 0, cx, cy, zoom);
-      const labelY = Math.min(axisY + 2, H - 12);
-      ctx.fillText(intGx.toString(), px, labelY);
+      const ig = Math.round(gx);
+      const [px] = worldToCanvas(ig, 0, cx, cy, zoom);
+      ctx.fillText(ig, px, Math.min(axisY + 2, H - 12));
     }
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     for (let gy = y0; gy <= y1 + 1e-9; gy += step) {
       if (Math.abs(gy) < 1e-9) continue;
-      if (!Number.isInteger(Math.round(gy))) continue;
-      const intGy = Math.round(gy);
-      const [, py] = worldToCanvas(0, intGy, cx, cy, zoom);
-      const labelX = Math.max(axisX - 2, 24);
-      ctx.fillText(intGy.toString(), labelX, py);
+      const ig = Math.round(gy);
+      const [, py] = worldToCanvas(0, ig, cx, cy, zoom);
+      ctx.fillText(ig, Math.max(axisX - 2, 22), py);
     }
- 
     ctx.restore();
   }
- 
+
+  /* ---- 描画: 曲線 ---- */
   function drawCurve(fn, color, cx, cy, zoom) {
     const spanX = (W / zoom) * 0.05;
-    const steps = 800;
     ctx.beginPath();
     ctx.strokeStyle = color;
     ctx.lineWidth = zoom > 8 ? 2.5 : 1.8;
     let first = true;
-    for (let i = 0; i <= steps; i++) {
-      const wx = cx - spanX + (2 * spanX * i / steps);
-      const wy = fn(wx);
-      const [px, py] = worldToCanvas(wx, wy, cx, cy, zoom);
-      if (first) { ctx.moveTo(px, py); first = false; } else ctx.lineTo(px, py);
+    for (let i = 0; i <= 800; i++) {
+      const wx = cx - spanX + 2 * spanX * i / 800;
+      const [px, py] = worldToCanvas(wx, fn(wx), cx, cy, zoom);
+      first ? (ctx.moveTo(px, py), first = false) : ctx.lineTo(px, py);
     }
     ctx.stroke();
   }
- 
-  function drawDot(wx, wy, color, glowColor, cx, cy, zoom) {
+
+  /* ---- 描画: 点 ---- */
+  function drawDot(wx, wy, color, glow, cx, cy, zoom) {
     const [px, py] = worldToCanvas(wx, wy, cx, cy, zoom);
     const r = zoom > 8 ? 9 : 6;
     ctx.save();
-    ctx.shadowColor = glowColor;
-    ctx.shadowBlur = 16;
+    ctx.shadowColor = glow; ctx.shadowBlur = 16;
     ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2);
     ctx.fillStyle = color; ctx.fill();
     ctx.shadowBlur = 0;
@@ -306,7 +289,8 @@ canvas#curve-canvas {
     ctx.stroke();
     ctx.restore();
   }
- 
+
+  /* ---- 描画: ラベル ---- */
   function drawCurveLabel(wx, wy, text, color, cx, cy, zoom) {
     if (zoom < 4) return;
     const [px, py] = worldToCanvas(wx, wy, cx, cy, zoom);
@@ -316,71 +300,78 @@ canvas#curve-canvas {
     ctx.fillText(text, px + 11, py - 8);
     ctx.restore();
   }
- 
-  let curX = TARGET_X - 55;
-  let phase = 'scene1';
-  let prevPhase = 'scene1';
- 
-  resize();
-  fadeToScene('scene1');
-  window.addEventListener('resize', resize);
- 
+
+  /* ---- メインループ ---- */
   function frame() {
     const zoom  = getZoom(curX);
-    const speed = getSpeed(curX, phase);
-    const y1v   = f1(curX);
-    const y2v   = f2(curX);
-    const cx    = curX;
-    const cy    = (y1v + y2v) / 2;
- 
+    const speed = getSpeed(curX);
+    const y1v   = f1(curX), y2v = f2(curX);
+    const cx    = curX, cy = (y1v + y2v) / 2;
+
     drawBackground();
     ctx.clearRect(0, 0, W, H);
- 
     drawGrid(cx, cy, zoom);
     drawCurve(f1, '#5599ff', cx, cy, zoom);
     drawCurve(f2, '#ff5588', cx, cy, zoom);
     drawDot(curX, y1v, '#5599ff', '#3366ff', cx, cy, zoom);
     drawDot(curX, y2v, '#ff5588', '#cc2255', cx, cy, zoom);
- 
-    drawCurveLabel(curX, y1v, 'y = sin x − 1',   '#88bbff', cx, cy, zoom);
-    drawCurveLabel(curX, y2v, 'y = sin(πx) + 1', '#ff88aa', cx, cy, zoom);
- 
+    drawCurveLabel(curX, y1v, 'y = sin x \u2212 1',    '#88bbff', cx, cy, zoom);
+    drawCurveLabel(curX, y2v, 'y = sin(\u03c0x) + 1', '#ff88aa', cx, cy, zoom);
+
     if (zoom > 6) {
       const dy = Math.abs(y1v - y2v);
       ctx.save();
       ctx.font = "11px 'Courier New', monospace";
       ctx.fillStyle = 'rgba(255,255,180,0.9)';
-      ctx.fillText('Δy = ' + dy.toFixed(5), W / 2 - 38, 22);
+      ctx.fillText('\u0394y = ' + dy.toFixed(5), W / 2 - 38, 22);
       ctx.restore();
     }
- 
-    hud.textContent = 'x = ' + curX.toFixed(4) + '   y₁ = ' + y1v.toFixed(4) + '   y₂ = ' + y2v.toFixed(4);
- 
-    /* 画像の位置を毎フレーム更新 */
+
+    hud.textContent = 'x = ' + curX.toFixed(4) +
+                      '   y\u2081 = ' + y1v.toFixed(4) +
+                      '   y\u2082 = ' + y2v.toFixed(4);
+
     updateImgPositions();
- 
-    /* フェーズ管理 */
+
+    /* ---- フェーズ判定 ---- */
     const dist = Math.abs(curX - TARGET_X);
     if (phase !== 'scene3') {
-      if (dist <= ZOOM_RANGE * 1.5) {
+      // ★ シーン②に入る条件を SCENE2_HALF に絞る
+      if (dist <= SCENE2_HALF) {
         if (phase !== 'scene2') phase = 'scene2';
       } else if (dist > SLOW_RANGE * 2) {
         if (phase !== 'scene1') phase = 'scene1';
       }
     }
-    if (phase !== prevPhase) { fadeToScene(phase); prevPhase = phase; }
- 
+
+    // フェーズが変わったら（または初回）フェード
+    if (phase !== prevPhase) {
+      fadeToScene(phase, phase !== prevPhase);
+      prevPhase = phase;
+    }
+
     curX += speed;
- 
-    if (curX > TARGET_X + SLOW_RANGE * 2 && phase === 'scene2') phase = 'scene3';
+
+    // シーン②→③の切り替え
+    if (curX > TARGET_X + SCENE2_HALF && phase === 'scene2') {
+      phase = 'scene3';
+    }
+    // ループ
     if (curX > TARGET_X + 60) {
       curX = TARGET_X - 55;
-      phase = 'scene1'; prevPhase = 'scene1';
+      phase = 'scene1';
+      prevPhase = ''; // 強制再表示
     }
- 
+
     requestAnimationFrame(frame);
   }
- 
+
+  /* ---- 起動 ---- */
+  resize();
+  window.addEventListener('resize', resize);
+  // 初回: 強制的にシーン①を表示
+  updateImgPositions();
+  fadeToScene('scene1', true);
   requestAnimationFrame(frame);
 })();
 </script>
