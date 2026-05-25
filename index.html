@@ -177,8 +177,8 @@ canvas#curve-canvas {
     const [blueX, blueY] = worldToCanvas(curX, y1v, cx, cy, zoom);
     const [redX,  redY ] = worldToCanvas(curX, y2v, cx, cy, zoom);
 
-    const imgW = Math.round(W / 6);
-    const imgH = Math.round(H / 6);
+    const imgW = Math.round(W / 4);
+    const imgH = Math.round(H / 4);
 
     // 青画像: 上端を青点のY座標に合わせ、X中心を青点に
     const blueLeft = Math.round(blueX - imgW / 2);
