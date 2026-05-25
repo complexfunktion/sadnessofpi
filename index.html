@@ -102,6 +102,7 @@ canvas#curve-canvas {
   const SLOW_SPEED   = 0.011;
   // シーン①③の速度: 移行カーブの中間値（t=0.5）と同程度
   const NORMAL_SPEED = BASE_SPEED + (SLOW_SPEED - BASE_SPEED) * 0.5; // ≈ 0.71
+  const SCENE3_SPEED  = 0.15;  // ★ シーン③の速度（小さいほど遅い）
 
   /* ---- DOM ---- */
   const wrapper  = document.getElementById('wrapper');
