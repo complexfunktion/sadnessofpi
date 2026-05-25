@@ -35,20 +35,18 @@ canvas#curve-canvas {
   z-index: 1;
   pointer-events: none;
 }
-/* 青点用画像: top=青点Y, height=残り下端まで → 画像上端が点に重なる */
+/* 青点用画像: 上端が青点に重なる・1/6サイズ */
 #img-layer img.blue-img {
   position: absolute;
-  left: 0; width: 100%;
-  object-fit: cover;
+  object-fit: contain;
   object-position: top center;
   opacity: 0;
   transition: opacity 0.6s ease;
 }
-/* 赤点用画像: top=0, height=赤点Y → 画像下端が点に重なる */
+/* 赤点用画像: 下端が赤点に重なる・1/6サイズ */
 #img-layer img.red-img {
   position: absolute;
-  left: 0; width: 100%;
-  object-fit: cover;
+  object-fit: contain;
   object-position: bottom center;
   opacity: 0;
   transition: opacity 0.6s ease;
@@ -99,9 +97,11 @@ canvas#curve-canvas {
   const SLOW_RANGE  = 8;    // この距離から減速開始
   const ZOOM_RANGE  = 4;    // この距離からズーム開始
   const SCENE2_HALF = 1.5;  // ★ シーン②の片側幅（小さいほど短い）
-  const ZOOM_MAX    = 30;
-  const BASE_SPEED  = 1.4;
-  const SLOW_SPEED  = 0.011;
+  const ZOOM_MAX     = 30;
+  const BASE_SPEED   = 1.4;
+  const SLOW_SPEED   = 0.011;
+  // シーン①③の速度: 移行カーブの中間値（t=0.5）と同程度
+  const NORMAL_SPEED = BASE_SPEED + (SLOW_SPEED - BASE_SPEED) * 0.5; // ≈ 0.71
 
   /* ---- DOM ---- */
   const wrapper  = document.getElementById('wrapper');
@@ -148,12 +148,13 @@ canvas#curve-canvas {
   }
 
   function getSpeed(x) {
-    if (phase === 'scene3') return BASE_SPEED;
+    if (phase === 'scene3') return NORMAL_SPEED;
     const d = Math.abs(x - TARGET_X);
-    if (d > SLOW_RANGE * 2) return BASE_SPEED;
+    if (d > SLOW_RANGE * 2) return NORMAL_SPEED;
     if (d > ZOOM_RANGE) {
+      // NORMAL_SPEED → SLOW_SPEED へ滑らかに移行
       const t = 1 - (d - ZOOM_RANGE) / (SLOW_RANGE * 2 - ZOOM_RANGE);
-      return BASE_SPEED + (SLOW_SPEED - BASE_SPEED) * Math.min(t * 2, 1);
+      return NORMAL_SPEED + (SLOW_SPEED - NORMAL_SPEED) * Math.min(t * 2, 1);
     }
     return SLOW_SPEED;
   }
@@ -167,22 +168,35 @@ canvas#curve-canvas {
     ];
   }
 
-  /* ---- 画像位置 (毎フレーム) ---- */
+  /* ---- 画像位置 (毎フレーム・1/6サイズ) ---- */
   function updateImgPositions() {
     const zoom = getZoom(curX);
     const y1v  = f1(curX), y2v = f2(curX);
     const cx   = curX, cy = (y1v + y2v) / 2;
-    const [, blueY] = worldToCanvas(curX, y1v, cx, cy, zoom);
-    const [, redY ] = worldToCanvas(curX, y2v, cx, cy, zoom);
+    const [blueX, blueY] = worldToCanvas(curX, y1v, cx, cy, zoom);
+    const [redX,  redY ] = worldToCanvas(curX, y2v, cx, cy, zoom);
 
-    const blueTop = Math.max(0,   Math.min(H - 1, Math.round(blueY)));
-    const redBot  = Math.max(1,   Math.min(H,     Math.round(redY)));
+    const imgW = Math.round(W / 6);
+    const imgH = Math.round(H / 6);
+
+    // 青画像: 上端を青点のY座標に合わせ、X中心を青点に
+    const blueLeft = Math.round(blueX - imgW / 2);
+    const blueTop  = Math.round(blueY);
+
+    // 赤画像: 下端を赤点のY座標に合わせ、X中心を赤点に
+    const redLeft = Math.round(redX - imgW / 2);
+    const redTop  = Math.round(redY - imgH);
 
     Object.values(imgMap).forEach(s => {
-      s.p1.style.top    = blueTop + 'px';
-      s.p1.style.height = (H - blueTop) + 'px';
-      s.p2.style.top    = '0px';
-      s.p2.style.height = redBot + 'px';
+      s.p1.style.left   = blueLeft + 'px';
+      s.p1.style.top    = blueTop  + 'px';
+      s.p1.style.width  = imgW + 'px';
+      s.p1.style.height = imgH + 'px';
+
+      s.p2.style.left   = redLeft + 'px';
+      s.p2.style.top    = redTop  + 'px';
+      s.p2.style.width  = imgW + 'px';
+      s.p2.style.height = imgH + 'px';
     });
   }
 
@@ -357,7 +371,7 @@ canvas#curve-canvas {
       phase = 'scene3';
     }
     // ループ
-    if (curX > TARGET_X + 100) {
+    if (curX > TARGET_X + 60) {
       curX = TARGET_X - 55;
       phase = 'scene1';
       prevPhase = ''; // 強制再表示
